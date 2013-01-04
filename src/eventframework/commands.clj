@@ -2,8 +2,12 @@
   (:require [clojure.tools.logging :as log]))
 
 (defprotocol CommandState
-  (next-position-index [state] "Returns the index of the next command")
-  (command-already-seen? [state command-id] "Returns whether the command with the given ID has already been received")
+  (next-position-index [state]
+    "Returns the index of the next command")
+  (command-already-seen? [state command-id]
+    "Returns whether the command with the given ID has already been received")
+  (append-command-and-clear-waiting [state command command-id]
+    "Appends the command to the state, clearing the waiting listeners")
   )
 
 (defrecord ^{:doc "Stores the command state of the server.
@@ -31,8 +35,16 @@
     [command-ids commands waiting world-id]
 
   CommandState
-  (next-position-index [state] (count (:commands state)))
-  (command-already-seen? [state command-id] (contains? (:command-ids state) command-id)))
+  (next-position-index [state]
+    (count (:commands state)))
+  (command-already-seen? [state command-id]
+    (contains? (:command-ids state) command-id))
+  (append-command-and-clear-waiting [state command command-id]
+    (assoc state
+      :command-ids (conj (:command-ids state) command-id)
+      :commands    (conj (:commands state) command)
+      :waiting     []))
+ )
 
 (defn new-uuid [] (str (java.util.UUID/randomUUID)))
 
@@ -72,15 +84,11 @@
 
 (defn append-command-get-waiting! [command-id command]
   (dosync
-   (let [state   (deref command-state)
-         new-cl  (conj (:commands state) command)]
+   (let [state (deref command-state)]
      (if (command-already-seen? state command-id)
        [(next-position state) nil]
        (let [new-state
-             (assoc state
-               :command-ids    (conj (:command-ids state) command-id)
-               :commands new-cl
-               :waiting  [])]
+             (append-command-and-clear-waiting state command command-id)]
          (ref-set command-state new-state)
          [(next-position new-state) (:waiting state)])))))
 
