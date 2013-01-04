@@ -1,6 +1,10 @@
 (ns eventframework.commands
   (:require [clojure.tools.logging :as log]))
 
+(defprotocol CommandState
+  (next-position-index [state] "Returns the index of the next command")
+  )
+
 (defrecord ^{:doc "Stores the command state of the server.
 
     command-ids
@@ -22,15 +26,18 @@
     testing etc.) it's generated on startup which means the client can easily
     diagnose if the server went down (because it will come up w/ a new,
     incompatible world-id)."}
-    CommandState
-    [command-ids commands waiting world-id])
+    TransientCommandState
+    [command-ids commands waiting world-id]
+
+  CommandState
+  (next-position-index [state] (count (:commands state))))
 
 (defn new-uuid [] (str (java.util.UUID/randomUUID)))
 
 (def initial-position "0")
 
 (defn starting-state []
-  (map->CommandState
+  (map->TransientCommandState
    {:command-ids #{} :commands [] :waiting [] :world-id (new-uuid)}))
 
 (defn to-position [s i]
@@ -48,7 +55,10 @@
                                           (:world-id s) ", got" (rm 1) ")")
                                nil)
      :else (let [i (Integer/parseInt (rm 2))]
-             (if (> i (count (:commands s))) nil i)))))
+             (if (> i (next-position-index s)) nil i)))))
+
+(defn next-position [state]
+  (to-position state (next-position-index state)))
 
 (def ^{:dynamic true,
        :doc "This is dynamically scoped for testing purposes,
@@ -61,17 +71,16 @@
 (defn append-command-get-waiting! [command-id command]
   (dosync
    (let [state   (deref command-state)
-         new-cl  (conj (:commands state) command)
-         new-pos (to-position state (count new-cl))]
+         new-cl  (conj (:commands state) command)]
      (if (contains? (:command-ids state) command-id)
-       [(to-position state (count (:commands state))) nil]
+       [(next-position state) nil]
        (let [new-state
              (assoc state
                :command-ids    (conj (:command-ids state) command-id)
                :commands new-cl
                :waiting  [])]
          (ref-set command-state new-state)
-         [new-pos (:waiting state)])))))
+         [(next-position new-state) (:waiting state)])))))
 
 (defn put-command! [command-id command]
   (let [[position waiting] (append-command-get-waiting! command-id command)]
@@ -85,11 +94,11 @@
     (subvec cl 0 ix)))
 
 (defn get-next-position-and-commands-from [state position]
-  (let [cl (:commands state)
+  (let [next-ix (next-position-index state)
         ix (from-position state position)]
-    (when (< ix (count cl))
-      [(to-position state (count cl))
-       (subvec cl ix)])))
+    (when (< ix next-ix)
+      [(to-position state next-ix)
+       (subvec (:commands state) ix)])))
 
 ;; FIXME(alexander): clean this up once more
 (defn- get-from-or-add-waiting! [position listener]
