@@ -3,6 +3,7 @@
 
 (defprotocol CommandState
   (next-position-index [state] "Returns the index of the next command")
+  (command-already-seen? [state command-id] "Returns whether the command with the given ID has already been received")
   )
 
 (defrecord ^{:doc "Stores the command state of the server.
@@ -30,7 +31,8 @@
     [command-ids commands waiting world-id]
 
   CommandState
-  (next-position-index [state] (count (:commands state))))
+  (next-position-index [state] (count (:commands state)))
+  (command-already-seen? [state command-id] (contains? (:command-ids state) command-id)))
 
 (defn new-uuid [] (str (java.util.UUID/randomUUID)))
 
@@ -72,7 +74,7 @@
   (dosync
    (let [state   (deref command-state)
          new-cl  (conj (:commands state) command)]
-     (if (contains? (:command-ids state) command-id)
+     (if (command-already-seen? state command-id)
        [(next-position state) nil]
        (let [new-state
              (assoc state
