@@ -12,7 +12,7 @@
 
 (defn get-new-commands [position]
   (let [[_ commands] (get-next-position-and-commands-from
-                      (deref *command-state*)
+                      (@*command-state*)
                       position)]
     commands))
 
